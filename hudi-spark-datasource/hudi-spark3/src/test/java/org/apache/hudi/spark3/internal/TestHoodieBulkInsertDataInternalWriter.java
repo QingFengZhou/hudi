@@ -45,6 +45,7 @@ import static org.apache.hudi.testutils.SparkDatasetTestUtils.toInternalRows;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
+ * test github commit
  * Unit tests {@link HoodieBulkInsertDataInternalWriter}.
  */
 public class TestHoodieBulkInsertDataInternalWriter extends
