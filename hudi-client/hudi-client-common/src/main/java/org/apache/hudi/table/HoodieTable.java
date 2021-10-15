@@ -63,6 +63,7 @@ import org.apache.hudi.exception.HoodieInsertException;
 import org.apache.hudi.exception.HoodieUpsertException;
 import org.apache.hudi.index.HoodieIndex;
 import org.apache.hudi.metadata.HoodieTableMetadata;
+import org.apache.hudi.metadata.HoodieTableMetadataWriter;
 import org.apache.hudi.table.action.HoodieWriteMetadata;
 import org.apache.hudi.table.action.bootstrap.HoodieBootstrapWriteMetadata;
 import org.apache.hudi.table.marker.WriteMarkers;
@@ -702,5 +703,14 @@ public abstract class HoodieTable<T extends HoodieRecordPayload, I, K, O> implem
     // This is to handle scenarios where this is called at the executor tasks which do not have access
     // to engine context, and it ends up being null (as its not serializable and marked transient here).
     return context == null ? new HoodieLocalEngineContext(hadoopConfiguration.get()) : context;
+  }
+
+  /**
+   * Fetch instance of {@link HoodieTableMetadataWriter}.
+   * @return instance of {@link HoodieTableMetadataWriter}
+   */
+  public Option<HoodieTableMetadataWriter> getMetadataWriter() {
+    // Each engine is expected to override this and provide the actual metadata writer if enabled.
+    return Option.empty();
   }
 }
