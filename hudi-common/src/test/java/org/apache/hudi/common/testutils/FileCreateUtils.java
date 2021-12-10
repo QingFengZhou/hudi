@@ -144,8 +144,13 @@ public class FileCreateUtils {
     createMetaFile(basePath, instantTime, HoodieTimeline.COMMIT_EXTENSION);
   }
 
-  public static void createCommit(String basePath, String instantTime, HoodieCommitMetadata metadata) throws IOException {
-    createMetaFile(basePath, instantTime, HoodieTimeline.COMMIT_EXTENSION, metadata.toJsonString().getBytes(StandardCharsets.UTF_8));
+  public static void createCommit(String basePath, String instantTime, Option<HoodieCommitMetadata> metadata) throws IOException {
+    if (metadata.isPresent()) {
+      createMetaFile(basePath, instantTime, HoodieTimeline.COMMIT_EXTENSION,
+          metadata.get().toJsonString().getBytes(StandardCharsets.UTF_8));
+    } else {
+      createMetaFile(basePath, instantTime, HoodieTimeline.COMMIT_EXTENSION);
+    }
   }
 
   public static void createCommit(String basePath, String instantTime, FileSystem fs) throws IOException {
@@ -333,6 +338,20 @@ public class FileCreateUtils {
 
   public static void deleteReplaceCommit(String basePath, String instantTime) throws IOException {
     removeMetaFile(basePath, instantTime, HoodieTimeline.REPLACE_COMMIT_EXTENSION);
+  }
+
+  public static void deleteRollbackCommit(String basePath, String instantTime) throws IOException {
+    removeMetaFile(basePath, instantTime, HoodieTimeline.ROLLBACK_EXTENSION);
+  }
+
+  public static java.nio.file.Path renameFileToTemp(java.nio.file.Path sourcePath, String instantTime) throws IOException {
+    java.nio.file.Path dummyFilePath = sourcePath.getParent().resolve(instantTime + ".temp");
+    Files.move(sourcePath, dummyFilePath);
+    return dummyFilePath;
+  }
+
+  public static void renameTempToMetaFile(java.nio.file.Path tempFilePath, java.nio.file.Path destPath) throws IOException {
+    Files.move(tempFilePath, destPath);
   }
 
   public static long getTotalMarkerFileCount(String basePath, String partitionPath, String instantTime, IOType ioType) throws IOException {

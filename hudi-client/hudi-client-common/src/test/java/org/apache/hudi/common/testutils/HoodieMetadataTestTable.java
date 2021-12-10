@@ -27,6 +27,7 @@ import org.apache.hudi.common.model.HoodieReplaceCommitMetadata;
 import org.apache.hudi.common.model.WriteOperationType;
 import org.apache.hudi.common.table.HoodieTableMetaClient;
 import org.apache.hudi.common.util.Option;
+import org.apache.hudi.common.util.collection.Pair;
 import org.apache.hudi.metadata.HoodieTableMetadataWriter;
 
 import org.apache.hadoop.fs.FileSystem;
@@ -40,7 +41,7 @@ import java.util.Map;
  */
 public class HoodieMetadataTestTable extends HoodieTestTable {
 
-  private HoodieTableMetadataWriter writer;
+  private final HoodieTableMetadataWriter writer;
 
   protected HoodieMetadataTestTable(String basePath, FileSystem fs, HoodieTableMetaClient metaClient, HoodieTableMetadataWriter writer) {
     super(basePath, fs, metaClient);
@@ -56,13 +57,27 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
     return new HoodieMetadataTestTable(metaClient.getBasePath(), metaClient.getRawFs(), metaClient, writer);
   }
 
+  /**
+   * Add commits to the requested partitions and update metadata table.
+   *
+   * @param commitTime                    - Commit time for the operation
+   * @param operationType                 - Operation type
+   * @param newPartitionsToAdd            - New partitions to add for the operation
+   * @param partitionToFilesNameLengthMap - Map of partition names to its list of files name and length pair
+   * @param bootstrap                     - Whether bootstrapping needed for the operation
+   * @param createInflightCommit          - Whether in flight commit needed for the operation
+   * @return Commit metadata for the commit operation performed.
+   * @throws Exception
+   */
   @Override
   public HoodieCommitMetadata doWriteOperation(String commitTime, WriteOperationType operationType,
-                                               List<String> newPartitionsToAdd, List<String> partitions,
-                                               int filesPerPartition, boolean bootstrap, boolean createInflightCommit) throws Exception {
-    HoodieCommitMetadata commitMetadata = super.doWriteOperation(commitTime, operationType, newPartitionsToAdd, partitions, filesPerPartition, bootstrap, createInflightCommit);
+                                               List<String> newPartitionsToAdd,
+                                               Map<String, List<Pair<String, Integer>>> partitionToFilesNameLengthMap,
+                                               boolean bootstrap, boolean createInflightCommit) throws Exception {
+    HoodieCommitMetadata commitMetadata = super.doWriteOperation(commitTime, operationType, newPartitionsToAdd,
+        partitionToFilesNameLengthMap, bootstrap, createInflightCommit);
     if (writer != null && !createInflightCommit) {
-      writer.update(commitMetadata, commitTime);
+      writer.update(commitMetadata, commitTime, false);
     }
     return commitMetadata;
   }
@@ -71,7 +86,7 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
   public HoodieTestTable moveInflightCommitToComplete(String instantTime, HoodieCommitMetadata metadata) throws IOException {
     super.moveInflightCommitToComplete(instantTime, metadata);
     if (writer != null) {
-      writer.update(metadata, instantTime);
+      writer.update(metadata, instantTime, false);
     }
     return this;
   }
@@ -79,7 +94,7 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
   public HoodieTestTable moveInflightCommitToComplete(String instantTime, HoodieCommitMetadata metadata, boolean ignoreWriter) throws IOException {
     super.moveInflightCommitToComplete(instantTime, metadata);
     if (!ignoreWriter && writer != null) {
-      writer.update(metadata, instantTime);
+      writer.update(metadata, instantTime, false);
     }
     return this;
   }
@@ -88,7 +103,7 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
   public HoodieTestTable moveInflightCompactionToComplete(String instantTime, HoodieCommitMetadata metadata) throws IOException {
     super.moveInflightCompactionToComplete(instantTime, metadata);
     if (writer != null) {
-      writer.update(metadata, instantTime);
+      writer.update(metadata, instantTime, true);
     }
     return this;
   }
@@ -105,7 +120,7 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
   public HoodieTestTable addCompaction(String instantTime, HoodieCommitMetadata commitMetadata) throws Exception {
     super.addCompaction(instantTime, commitMetadata);
     if (writer != null) {
-      writer.update(commitMetadata, instantTime);
+      writer.update(commitMetadata, instantTime, true);
     }
     return this;
   }
@@ -136,8 +151,9 @@ public class HoodieMetadataTestTable extends HoodieTestTable {
       HoodieReplaceCommitMetadata completeReplaceMetadata) throws Exception {
     super.addReplaceCommit(instantTime, requestedReplaceMetadata, inflightReplaceMetadata, completeReplaceMetadata);
     if (writer != null) {
-      writer.update(completeReplaceMetadata, instantTime);
+      writer.update(completeReplaceMetadata, instantTime, true);
     }
     return this;
   }
+
 }

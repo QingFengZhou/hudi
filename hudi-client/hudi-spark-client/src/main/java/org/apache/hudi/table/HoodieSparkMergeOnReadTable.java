@@ -39,9 +39,9 @@ import org.apache.hudi.exception.HoodieIOException;
 import org.apache.hudi.table.action.HoodieWriteMetadata;
 import org.apache.hudi.table.action.bootstrap.SparkBootstrapDeltaCommitActionExecutor;
 import org.apache.hudi.table.action.bootstrap.HoodieBootstrapWriteMetadata;
-import org.apache.hudi.table.action.compact.BaseScheduleCompactionActionExecutor;
-import org.apache.hudi.table.action.compact.SparkRunCompactionActionExecutor;
-import org.apache.hudi.table.action.compact.SparkScheduleCompactionActionExecutor;
+import org.apache.hudi.table.action.compact.HoodieSparkMergeOnReadTableCompactor;
+import org.apache.hudi.table.action.compact.RunCompactionActionExecutor;
+import org.apache.hudi.table.action.compact.ScheduleCompactionActionExecutor;
 import org.apache.hudi.table.action.deltacommit.SparkBulkInsertDeltaCommitActionExecutor;
 import org.apache.hudi.table.action.deltacommit.SparkBulkInsertPreppedDeltaCommitActionExecutor;
 import org.apache.hudi.table.action.deltacommit.SparkDeleteDeltaCommitActionExecutor;
@@ -78,6 +78,11 @@ public class HoodieSparkMergeOnReadTable<T extends HoodieRecordPayload> extends 
 
   HoodieSparkMergeOnReadTable(HoodieWriteConfig config, HoodieEngineContext context, HoodieTableMetaClient metaClient) {
     super(config, context, metaClient);
+  }
+
+  @Override
+  public boolean isTableServiceAction(String actionType) {
+    return !actionType.equals(HoodieTimeline.DELTA_COMMIT_ACTION);
   }
 
   @Override
@@ -123,15 +128,19 @@ public class HoodieSparkMergeOnReadTable<T extends HoodieRecordPayload> extends 
 
   @Override
   public Option<HoodieCompactionPlan> scheduleCompaction(HoodieEngineContext context, String instantTime, Option<Map<String, String>> extraMetadata) {
-    BaseScheduleCompactionActionExecutor scheduleCompactionExecutor = new SparkScheduleCompactionActionExecutor(
-        context, config, this, instantTime, extraMetadata);
+    ScheduleCompactionActionExecutor scheduleCompactionExecutor = new ScheduleCompactionActionExecutor(
+        context, config, this, instantTime, extraMetadata,
+        new HoodieSparkMergeOnReadTableCompactor());
     return scheduleCompactionExecutor.execute();
   }
 
   @Override
-  public HoodieWriteMetadata<JavaRDD<WriteStatus>> compact(HoodieEngineContext context, String compactionInstantTime) {
-    SparkRunCompactionActionExecutor compactionExecutor = new SparkRunCompactionActionExecutor((HoodieSparkEngineContext) context, config, this, compactionInstantTime);
-    return compactionExecutor.execute();
+  public HoodieWriteMetadata<JavaRDD<WriteStatus>> compact(
+      HoodieEngineContext context, String compactionInstantTime) {
+    RunCompactionActionExecutor compactionExecutor = new RunCompactionActionExecutor(
+        context, config, this, compactionInstantTime, new HoodieSparkMergeOnReadTableCompactor(),
+        new HoodieSparkCopyOnWriteTable(config, context, getMetaClient()));
+    return convertMetadata(compactionExecutor.execute());
   }
 
   @Override
@@ -147,16 +156,18 @@ public class HoodieSparkMergeOnReadTable<T extends HoodieRecordPayload> extends 
   @Override
   public Option<HoodieRollbackPlan> scheduleRollback(HoodieEngineContext context,
                                                      String instantTime,
-                                                     HoodieInstant instantToRollback, boolean skipTimelinePublish) {
-    return new BaseRollbackPlanActionExecutor<>(context, config, this, instantTime, instantToRollback, skipTimelinePublish).execute();
+                                                     HoodieInstant instantToRollback, boolean skipTimelinePublish, boolean shouldRollbackUsingMarkers) {
+    return new BaseRollbackPlanActionExecutor<>(context, config, this, instantTime, instantToRollback, skipTimelinePublish,
+        shouldRollbackUsingMarkers).execute();
   }
 
   @Override
   public HoodieRollbackMetadata rollback(HoodieEngineContext context,
                                          String rollbackInstantTime,
                                          HoodieInstant commitInstant,
-                                         boolean deleteInstants) {
-    return new MergeOnReadRollbackActionExecutor(context, config, this, rollbackInstantTime, commitInstant, deleteInstants).execute();
+                                         boolean deleteInstants,
+                                         boolean skipLocking) {
+    return new MergeOnReadRollbackActionExecutor(context, config, this, rollbackInstantTime, commitInstant, deleteInstants, skipLocking).execute();
   }
 
   @Override

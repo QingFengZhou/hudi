@@ -196,6 +196,17 @@ public class FlinkOptions extends HoodieConfig {
       .defaultValue(60)// default 1 minute
       .withDescription("Check interval for streaming read of SECOND, default 1 minute");
 
+  // this option is experimental
+  public static final ConfigOption<Boolean> READ_STREAMING_SKIP_COMPACT = ConfigOptions
+      .key("read.streaming.skip_compaction")
+      .booleanType()
+      .defaultValue(false)// default read as batch
+      .withDescription("Whether to skip compaction instants for streaming read,\n"
+          + "there are two cases that this option can be used to avoid reading duplicates:\n"
+          + "1) you are definitely sure that the consumer reads faster than any compaction instants, "
+          + "usually with delta time compaction strategy that is long enough, for e.g, one week;\n"
+          + "2) changelog mode is enabled, this option is a solution to keep data integrity");
+
   public static final String START_COMMIT_EARLIEST = "earliest";
   public static final ConfigOption<String> READ_START_COMMIT = ConfigOptions
       .key("read.start-commit")
@@ -227,11 +238,13 @@ public class FlinkOptions extends HoodieConfig {
       .defaultValue(TABLE_TYPE_COPY_ON_WRITE)
       .withDescription("Type of table to write. COPY_ON_WRITE (or) MERGE_ON_READ");
 
-  public static final ConfigOption<Boolean> INSERT_DEDUP = ConfigOptions
-      .key("write.insert.deduplicate")
+  public static final ConfigOption<Boolean> INSERT_CLUSTER = ConfigOptions
+      .key("write.insert.cluster")
       .booleanType()
-      .defaultValue(true)
-      .withDescription("Whether to deduplicate for INSERT operation, if disabled, writes the base files directly, default true");
+      .defaultValue(false)
+      .withDescription("Whether to merge small files for insert mode, "
+          + "if true, the write throughput will decrease because the read/write of existing small file, "
+          + "only valid for COW table, default false");
 
   public static final ConfigOption<String> OPERATION = ConfigOptions
       .key("write.operation")
@@ -239,6 +252,7 @@ public class FlinkOptions extends HoodieConfig {
       .defaultValue("upsert")
       .withDescription("The write operation, that this write should do");
 
+  public static final String NO_PRE_COMBINE = "no_precombine";
   public static final ConfigOption<String> PRECOMBINE_FIELD = ConfigOptions
       .key("write.precombine.field")
       .stringType()
@@ -403,7 +417,7 @@ public class FlinkOptions extends HoodieConfig {
           + "For DFS, this needs to be aligned with the underlying filesystem block size for optimal performance.");
 
   public static final ConfigOption<Integer> WRITE_PARQUET_PAGE_SIZE = ConfigOptions
-      .key("hoodie.parquet.page.size")
+      .key("write.parquet.page.size")
       .intType()
       .defaultValue(1)
       .withDescription("Parquet page size. Page is the unit of read within a parquet file. "
@@ -488,6 +502,12 @@ public class FlinkOptions extends HoodieConfig {
       .intType()
       .defaultValue(3600) // default 1 hour
       .withDescription("Max delta seconds time needed to trigger compaction, default 1 hour");
+
+  public static final ConfigOption<Integer> COMPACTION_TIMEOUT_SECONDS = ConfigOptions
+      .key("compaction.timeout.seconds")
+      .intType()
+      .defaultValue(1200) // default 20 minutes
+      .withDescription("Max timeout time in seconds for online compaction to rollback, default 20 minutes");
 
   public static final ConfigOption<Integer> COMPACTION_MAX_MEMORY = ConfigOptions
       .key("compaction.max_memory")

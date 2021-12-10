@@ -27,6 +27,7 @@ import org.apache.hudi.common.table.TableSchemaResolver;
 import org.apache.hudi.common.table.view.HoodieTableFileSystemView;
 import org.apache.hudi.common.util.Option;
 import org.apache.hudi.configuration.FlinkOptions;
+import org.apache.hudi.configuration.OptionsResolver;
 import org.apache.hudi.exception.HoodieException;
 import org.apache.hudi.hadoop.HoodieROTablePathFilter;
 import org.apache.hudi.source.FileIndex;
@@ -180,7 +181,7 @@ public class HoodieTableSource implements
               conf, FilePathUtils.toFlinkPath(path), maxCompactionMemoryInBytes, getRequiredPartitionPaths());
           InputFormat<RowData, ?> inputFormat = getInputFormat(true);
           OneInputStreamOperatorFactory<MergeOnReadInputSplit, RowData> factory = StreamReadOperator.factory((MergeOnReadInputFormat) inputFormat);
-          SingleOutputStreamOperator<RowData> source = execEnv.addSource(monitoringFunction, "split_monitor")
+          SingleOutputStreamOperator<RowData> source = execEnv.addSource(monitoringFunction, getSourceOperatorName("split_monitor"))
               .setParallelism(1)
               .transform("split_reader", typeInfo, factory)
               .setParallelism(conf.getInteger(FlinkOptions.READ_TASKS));
@@ -188,7 +189,7 @@ public class HoodieTableSource implements
         } else {
           InputFormatSourceFunction<RowData> func = new InputFormatSourceFunction<>(getInputFormat(), typeInfo);
           DataStreamSource<RowData> source = execEnv.addSource(func, asSummaryString(), typeInfo);
-          return source.name("bounded_source").setParallelism(conf.getInteger(FlinkOptions.READ_TASKS));
+          return source.name(getSourceOperatorName("bounded_source")).setParallelism(conf.getInteger(FlinkOptions.READ_TASKS));
         }
       }
     };
@@ -196,11 +197,9 @@ public class HoodieTableSource implements
 
   @Override
   public ChangelogMode getChangelogMode() {
-    return conf.getBoolean(FlinkOptions.CHANGELOG_ENABLED)
-        ? ChangelogModes.FULL
-        // when all the changes are persisted or read as batch,
-        // use INSERT mode.
-        : ChangelogMode.insertOnly();
+    // when read as streaming and changelog mode is enabled, emit as FULL mode;
+    // when all the changes are compacted or read as batch, emit as INSERT mode.
+    return OptionsResolver.emitChangelog(conf) ? ChangelogModes.FULL : ChangelogMode.insertOnly();
   }
 
   @Override
@@ -266,6 +265,21 @@ public class HoodieTableSource implements
     return requiredPartitions;
   }
 
+  private String getSourceOperatorName(String operatorName) {
+    String[] schemaFieldNames = this.schema.getColumnNames().toArray(new String[0]);
+    List<String> fields = Arrays.stream(this.requiredPos)
+        .mapToObj(i -> schemaFieldNames[i])
+        .collect(Collectors.toList());
+    StringBuilder sb = new StringBuilder();
+    sb.append(operatorName)
+        .append("(")
+        .append("table=").append(Collections.singletonList(conf.getString(FlinkOptions.TABLE_NAME)))
+        .append(", ")
+        .append("fields=").append(fields)
+        .append(")");
+    return sb.toString();
+  }
+
   @Nullable
   private Set<String> getRequiredPartitionPaths() {
     if (this.requiredPartitions == null) {
@@ -289,8 +303,8 @@ public class HoodieTableSource implements
     }
 
     HoodieTableFileSystemView fsView = new HoodieTableFileSystemView(metaClient,
-        metaClient.getActiveTimeline().getCommitsTimeline()
-            .filterCompletedInstants(), fileStatuses);
+        // file-slice after pending compaction-requested instant-time is also considered valid
+        metaClient.getCommitsAndCompactionTimeline().filterCompletedAndCompactionInstants(), fileStatuses);
     String latestCommit = fsView.getLastInstant().get().getTimestamp();
     final String mergeType = this.conf.getString(FlinkOptions.MERGE_TYPE);
     final AtomicInteger cnt = new AtomicInteger(0);
