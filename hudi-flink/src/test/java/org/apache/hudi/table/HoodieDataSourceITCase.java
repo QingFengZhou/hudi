@@ -245,7 +245,7 @@ public class HoodieDataSourceITCase extends AbstractTestBase {
   @Test
   void testStreamWriteReadSkippingCompaction() throws Exception {
     // create filesystem table named source
-    String createSource = TestConfigurations.getFileSourceDDL("source");
+    String createSource = TestConfigurations.getFileSourceDDL("source", 4);
     streamTableEnv.executeSql(createSource);
 
     String hoodieTableDDL = sql("t1")
@@ -260,7 +260,12 @@ public class HoodieDataSourceITCase extends AbstractTestBase {
     String insertInto = "insert into t1 select * from source";
     execInsertSql(streamTableEnv, insertInto);
 
-    List<Row> rows = execSelectSql(streamTableEnv, "select * from t1", 10);
+    String instant = TestUtils.getNthCompleteInstant(tempFile.getAbsolutePath(), 2, true);
+
+    streamTableEnv.getConfig().getConfiguration()
+        .setBoolean("table.dynamic-table-options.enabled", true);
+    final String query = String.format("select * from t1/*+ options('read.start-commit'='%s')*/", instant);
+    List<Row> rows = execSelectSql(streamTableEnv, query, 10);
     assertRowsEquals(rows, TestData.DATA_SET_SOURCE_INSERT_LATEST_COMMIT);
   }
 
@@ -1073,6 +1078,62 @@ public class HoodieDataSourceITCase extends AbstractTestBase {
         + "+I[id6, Emma, 20, null, 1970-01-01T00:00:00.006, par3], "
         + "+I[id7, Bob, 44, null, 1970-01-01T00:00:00.007, par4], "
         + "+I[id8, Han, 56, null, 1970-01-01T00:00:00.008, par4]]";
+    assertRowsEquals(result, expected);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"insert", "upsert", "bulk_insert"})
+  void testParquetComplexTypes(String operation) {
+    TableEnvironment tableEnv = batchTableEnv;
+
+    String hoodieTableDDL = sql("t1")
+        .field("f_int int")
+        .field("f_array array<varchar(10)>")
+        .field("f_map map<varchar(20), int>")
+        .field("f_row row(f_row_f0 int, f_row_f1 varchar(10))")
+        .pkField("f_int")
+        .noPartition()
+        .option(FlinkOptions.PATH, tempFile.getAbsolutePath())
+        .option(FlinkOptions.OPERATION, operation)
+        .end();
+    tableEnv.executeSql(hoodieTableDDL);
+
+    execInsertSql(tableEnv, TestSQL.COMPLEX_TYPE_INSERT_T1);
+
+    List<Row> result = CollectionUtil.iterableToList(
+        () -> tableEnv.sqlQuery("select * from t1").execute().collect());
+    final String expected = "["
+        + "+I[1, [abc1, def1], {abc1=1, def1=3}, +I[1, abc1]], "
+        + "+I[2, [abc2, def2], {def2=3, abc2=1}, +I[2, abc2]], "
+        + "+I[3, [abc3, def3], {def3=3, abc3=1}, +I[3, abc3]]]";
+    assertRowsEquals(result, expected);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"insert", "upsert", "bulk_insert"})
+  void testParquetComplexNestedRowTypes(String operation) {
+    TableEnvironment tableEnv = batchTableEnv;
+
+    String hoodieTableDDL = sql("t1")
+        .field("f_int int")
+        .field("f_array array<varchar(10)>")
+        .field("f_map map<varchar(20), int>")
+        .field("f_row row(f_nested_array array<varchar(10)>, f_nested_row row(f_row_f0 int, f_row_f1 varchar(10)))")
+        .pkField("f_int")
+        .noPartition()
+        .option(FlinkOptions.PATH, tempFile.getAbsolutePath())
+        .option(FlinkOptions.OPERATION, operation)
+        .end();
+    tableEnv.executeSql(hoodieTableDDL);
+
+    execInsertSql(tableEnv, TestSQL.COMPLEX_NESTED_ROW_TYPE_INSERT_T1);
+
+    List<Row> result = CollectionUtil.iterableToList(
+        () -> tableEnv.sqlQuery("select * from t1").execute().collect());
+    final String expected = "["
+        + "+I[1, [abc1, def1], {abc1=1, def1=3}, +I[[abc1, def1], +I[1, abc1]]], "
+        + "+I[2, [abc2, def2], {def2=3, abc2=1}, +I[[abc2, def2], +I[2, abc2]]], "
+        + "+I[3, [abc3, def3], {def3=3, abc3=1}, +I[[abc3, def3], +I[3, abc3]]]]";
     assertRowsEquals(result, expected);
   }
 

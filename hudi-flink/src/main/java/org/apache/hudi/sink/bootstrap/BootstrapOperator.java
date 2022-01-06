@@ -120,7 +120,7 @@ public class BootstrapOperator<I, O extends HoodieRecord<?>>
     }
 
     this.hadoopConf = StreamerUtil.getHadoopConf();
-    this.writeConfig = StreamerUtil.getHoodieClientConfig(this.conf);
+    this.writeConfig = StreamerUtil.getHoodieClientConfig(this.conf, true);
     this.hoodieTable = FlinkTables.createTable(writeConfig, hadoopConf, getRuntimeContext());
     this.aggregateManager = getRuntimeContext().getGlobalAggregateManager();
 
@@ -179,9 +179,6 @@ public class BootstrapOperator<I, O extends HoodieRecord<?>>
   protected void loadRecords(String partitionPath) throws Exception {
     long start = System.currentTimeMillis();
 
-    BaseFileUtils fileUtils = BaseFileUtils.getInstance(this.hoodieTable.getBaseFileFormat());
-    Schema schema = new TableSchemaResolver(this.hoodieTable.getMetaClient()).getTableAvroSchema();
-
     final int parallelism = getRuntimeContext().getNumberOfParallelSubtasks();
     final int maxParallelism = getRuntimeContext().getMaxNumberOfParallelSubtasks();
     final int taskID = getRuntimeContext().getIndexOfThisSubtask();
@@ -193,6 +190,9 @@ public class BootstrapOperator<I, O extends HoodieRecord<?>>
     Option<HoodieInstant> latestCommitTime = commitsTimeline.filterCompletedInstants().lastInstant();
 
     if (latestCommitTime.isPresent()) {
+      BaseFileUtils fileUtils = BaseFileUtils.getInstance(this.hoodieTable.getBaseFileFormat());
+      Schema schema = new TableSchemaResolver(this.hoodieTable.getMetaClient()).getTableAvroSchema();
+
       List<FileSlice> fileSlices = this.hoodieTable.getSliceView()
           .getLatestFileSlicesBeforeOrOn(partitionPath, latestCommitTime.get().getTimestamp(), true)
           .collect(toList());

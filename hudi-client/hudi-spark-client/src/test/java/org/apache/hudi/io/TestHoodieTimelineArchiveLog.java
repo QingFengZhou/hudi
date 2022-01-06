@@ -18,15 +18,10 @@
 
 package org.apache.hudi.io;
 
-import org.apache.hudi.avro.model.HoodieActionInstant;
-import org.apache.hudi.avro.model.HoodieCleanMetadata;
-import org.apache.hudi.avro.model.HoodieCleanerPlan;
 import org.apache.hudi.avro.model.HoodieRollbackMetadata;
 import org.apache.hudi.client.utils.MetadataConversionUtils;
-import org.apache.hudi.common.HoodieCleanStat;
 import org.apache.hudi.common.config.HoodieMetadataConfig;
 import org.apache.hudi.common.fs.HoodieWrapperFileSystem;
-import org.apache.hudi.common.model.HoodieCleaningPolicy;
 import org.apache.hudi.common.model.HoodieCommitMetadata;
 import org.apache.hudi.common.model.HoodieTableType;
 import org.apache.hudi.common.model.WriteOperationType;
@@ -35,13 +30,11 @@ import org.apache.hudi.common.table.timeline.HoodieArchivedTimeline;
 import org.apache.hudi.common.table.timeline.HoodieInstant;
 import org.apache.hudi.common.table.timeline.HoodieInstant.State;
 import org.apache.hudi.common.table.timeline.HoodieTimeline;
-import org.apache.hudi.common.table.timeline.versioning.clean.CleanPlanV2MigrationHandler;
 import org.apache.hudi.common.table.view.FileSystemViewStorageConfig;
 import org.apache.hudi.common.testutils.HoodieMetadataTestTable;
 import org.apache.hudi.common.testutils.HoodieTestDataGenerator;
 import org.apache.hudi.common.testutils.HoodieTestTable;
 import org.apache.hudi.common.testutils.HoodieTestUtils;
-import org.apache.hudi.common.util.Option;
 import org.apache.hudi.common.util.collection.Pair;
 import org.apache.hudi.config.HoodieCompactionConfig;
 import org.apache.hudi.config.HoodieWriteConfig;
@@ -70,11 +63,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static org.apache.hudi.common.util.CleanerUtils.convertCleanMetadata;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -241,6 +232,25 @@ public class TestHoodieTimelineArchiveLog extends HoodieClientTestHarness {
         "Archived commits should always be safe");
     assertTrue(timeline.containsInstant(new HoodieInstant(false, HoodieTimeline.COMMIT_ACTION, "103")),
         "Archived commits should always be safe");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  public void testPendingClusteringWillBlockArchival(boolean enableMetadata) throws Exception {
+    HoodieWriteConfig writeConfig = initTestTableAndGetWriteConfig(enableMetadata, 2, 5, 2);
+    HoodieTestDataGenerator.createPendingReplaceFile(basePath, "00000000", wrapperFs.getConf());
+    for (int i = 1; i < 8; i++) {
+      testTable.doWriteOperation("0000000" + i, WriteOperationType.UPSERT, Arrays.asList("p1", "p2"), Arrays.asList("p1", "p2"), 2);
+      // archival
+      Pair<List<HoodieInstant>, List<HoodieInstant>> commitsList = archiveAndGetCommitsList(writeConfig);
+      List<HoodieInstant> originalCommits = commitsList.getKey();
+      List<HoodieInstant> commitsAfterArchival = commitsList.getValue();
+      assertEquals(originalCommits, commitsAfterArchival);
+    }
+
+    HoodieTimeline timeline = metaClient.getActiveTimeline().reload().getCommitsTimeline().filterCompletedInstants();
+    assertEquals(7, timeline.countInstants(),
+        "Since we have a pending clustering instant at 00000000, we should never archive any commit after 00000000");
   }
 
   @ParameterizedTest
@@ -483,8 +493,9 @@ public class TestHoodieTimelineArchiveLog extends HoodieClientTestHarness {
         HoodieTimeline.CLEAN_ACTION), expectedActiveInstants, commitsAfterArchival);
   }
 
-  @Test
-  public void testArchiveCompletedRollbackAndClean() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  public void testArchiveCompletedRollbackAndClean(boolean isEmpty) throws Exception {
     init();
     int minInstantsToKeep = 2;
     int maxInstantsToKeep = 10;
@@ -500,11 +511,11 @@ public class TestHoodieTimelineArchiveLog extends HoodieClientTestHarness {
 
     int startInstant = 1;
     for (int i = 0; i < maxInstantsToKeep + 1; i++, startInstant++) {
-      createCleanMetadata(startInstant + "", false);
+      createCleanMetadata(startInstant + "", false, isEmpty || i % 2 == 0);
     }
 
     for (int i = 0; i < maxInstantsToKeep + 1; i++, startInstant += 2) {
-      createCommitAndRollbackFile(startInstant + 1 + "", startInstant + "", false);
+      createCommitAndRollbackFile(startInstant + 1 + "", startInstant + "", false, isEmpty || i % 2 == 0);
     }
 
     HoodieTable table = HoodieSparkTable.create(cfg, context, metaClient);
@@ -682,31 +693,16 @@ public class TestHoodieTimelineArchiveLog extends HoodieClientTestHarness {
     return allInstants;
   }
 
-  private HoodieInstant createCleanMetadata(String instantTime, boolean inflightOnly) throws IOException {
-    HoodieCleanerPlan cleanerPlan = new HoodieCleanerPlan(new HoodieActionInstant("", "", ""), "", new HashMap<>(),
-        CleanPlanV2MigrationHandler.VERSION, new HashMap<>());
-    if (inflightOnly) {
-      HoodieTestTable.of(metaClient).addInflightClean(instantTime, cleanerPlan);
-    } else {
-      HoodieCleanStat cleanStats = new HoodieCleanStat(
-          HoodieCleaningPolicy.KEEP_LATEST_FILE_VERSIONS,
-          HoodieTestUtils.DEFAULT_PARTITION_PATHS[new Random().nextInt(HoodieTestUtils.DEFAULT_PARTITION_PATHS.length)],
-          Collections.emptyList(),
-          Collections.emptyList(),
-          Collections.emptyList(),
-          instantTime);
-      HoodieCleanMetadata cleanMetadata = convertCleanMetadata(instantTime, Option.of(0L), Collections.singletonList(cleanStats));
-      HoodieTestTable.of(metaClient).addClean(instantTime, cleanerPlan, cleanMetadata);
-    }
-    return new HoodieInstant(inflightOnly, "clean", instantTime);
-  }
-
   private void createCommitAndRollbackFile(String commitToRollback, String rollbackTIme, boolean isRollbackInflight) throws IOException {
-    HoodieTestDataGenerator.createCommitFile(basePath, commitToRollback, wrapperFs.getConf());
-    createRollbackMetadata(rollbackTIme, commitToRollback, isRollbackInflight);
+    createCommitAndRollbackFile(commitToRollback, rollbackTIme, isRollbackInflight, false);
   }
 
-  private HoodieInstant createRollbackMetadata(String rollbackTime, String commitToRollback, boolean inflight) throws IOException {
+  private void createCommitAndRollbackFile(String commitToRollback, String rollbackTIme, boolean isRollbackInflight, boolean isEmpty) throws IOException {
+    HoodieTestDataGenerator.createCommitFile(basePath, commitToRollback, wrapperFs.getConf());
+    createRollbackMetadata(rollbackTIme, commitToRollback, isRollbackInflight, isEmpty);
+  }
+
+  private HoodieInstant createRollbackMetadata(String rollbackTime, String commitToRollback, boolean inflight, boolean isEmpty) throws IOException {
     if (inflight) {
       HoodieTestTable.of(metaClient).addInflightRollback(rollbackTime);
     } else {
@@ -719,7 +715,7 @@ public class TestHoodieTimelineArchiveLog extends HoodieClientTestHarness {
           .setPartitionMetadata(Collections.emptyMap())
           .setInstantsRollback(Collections.emptyList())
           .build();
-      HoodieTestTable.of(metaClient).addRollback(rollbackTime, hoodieRollbackMetadata);
+      HoodieTestTable.of(metaClient).addRollback(rollbackTime, hoodieRollbackMetadata, isEmpty);
     }
     return new HoodieInstant(inflight, "rollback", rollbackTime);
   }

@@ -82,6 +82,7 @@ import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -200,7 +201,7 @@ public abstract class AbstractHoodieWriteClient<T extends HoodieRecordPayload, I
     } catch (IOException e) {
       throw new HoodieCommitException("Failed to complete commit " + config.getBasePath() + " at time " + instantTime, e);
     } finally {
-      this.txnManager.endTransaction();
+      this.txnManager.endTransaction(Option.of(inflightInstant));
     }
     // do this outside of lock since compaction, clustering can be time taking and we don't need a lock for the entire execution period
     runTableServicesInline(table, metadata, extraMetadata);
@@ -265,6 +266,7 @@ public abstract class AbstractHoodieWriteClient<T extends HoodieRecordPayload, I
    * @param metadata instance of {@link HoodieCommitMetadata}.
    */
   protected void writeTableMetadata(HoodieTable table, String instantTime, String actionType, HoodieCommitMetadata metadata) {
+    context.setJobStatus(this.getClass().getSimpleName(), "Committing to metadata table");
     table.getMetadataWriter(instantTime).ifPresent(w -> ((HoodieTableMetadataWriter) w).update(metadata, instantTime,
         table.isTableServiceAction(actionType)));
   }
@@ -423,7 +425,11 @@ public abstract class AbstractHoodieWriteClient<T extends HoodieRecordPayload, I
       HoodieTableMetaClient metaClient) {
     setOperationType(writeOperationType);
     this.lastCompletedTxnAndMetadata = TransactionUtils.getLastCompletedTxnInstantAndMetadata(metaClient);
-    this.asyncCleanerService = AsyncCleanerService.startAsyncCleaningIfEnabled(this);
+    if (null == this.asyncCleanerService) {
+      this.asyncCleanerService = AsyncCleanerService.startAsyncCleaningIfEnabled(this);
+    } else {
+      this.asyncCleanerService.start(null);
+    }
   }
 
   /**
@@ -893,21 +899,26 @@ public abstract class AbstractHoodieWriteClient<T extends HoodieRecordPayload, I
   }
 
   /**
-   * Fetch map of pending commits to be rolledback to {@link HoodiePendingRollbackInfo}.
+   * Fetch map of pending commits to be rolled-back to {@link HoodiePendingRollbackInfo}.
    * @param metaClient instance of {@link HoodieTableMetaClient} to use.
-   * @return map of pending commits to be rolledback instants to Rollback Instant and Rollback plan Pair.
+   * @return map of pending commits to be rolled-back instants to Rollback Instant and Rollback plan Pair.
    */
   protected Map<String, Option<HoodiePendingRollbackInfo>> getPendingRollbackInfos(HoodieTableMetaClient metaClient) {
-    return metaClient.getActiveTimeline().filterPendingRollbackTimeline().getInstants().map(
-        entry -> {
-          try {
-            HoodieRollbackPlan rollbackPlan = RollbackUtils.getRollbackPlan(metaClient, entry);
-            return Pair.of(rollbackPlan.getInstantToRollback().getCommitTime(), Option.of(new HoodiePendingRollbackInfo(entry, rollbackPlan)));
-          } catch (IOException e) {
-            throw new HoodieIOException("Fetching rollback plan failed for " + entry, e);
-          }
+    List<HoodieInstant> instants = metaClient.getActiveTimeline().filterPendingRollbackTimeline().getInstants().collect(Collectors.toList());
+    Map<String, Option<HoodiePendingRollbackInfo>> infoMap = new HashMap<>();
+    HoodieTimeline pendingCompactionTimeline = metaClient.getActiveTimeline().filterPendingCompactionTimeline();
+    for (HoodieInstant instant : instants) {
+      try {
+        HoodieRollbackPlan rollbackPlan = RollbackUtils.getRollbackPlan(metaClient, instant);
+        String instantToRollback = rollbackPlan.getInstantToRollback().getCommitTime();
+        if (!pendingCompactionTimeline.containsInstant(instantToRollback)) {
+          infoMap.putIfAbsent(instantToRollback, Option.of(new HoodiePendingRollbackInfo(instant, rollbackPlan)));
         }
-    ).collect(Collectors.toMap(Pair::getKey, Pair::getValue));
+      } catch (IOException e) {
+        LOG.warn("Fetching rollback plan failed for " + infoMap + ", skip the plan", e);
+      }
+    }
+    return infoMap;
   }
 
   /**
@@ -1060,13 +1071,14 @@ public abstract class AbstractHoodieWriteClient<T extends HoodieRecordPayload, I
   public Option<String> scheduleTableService(String instantTime, Option<Map<String, String>> extraMetadata,
                                              TableServiceType tableServiceType) {
     // A lock is required to guard against race conditions between an on-going writer and scheduling a table service.
+    final Option<HoodieInstant> inflightInstant = Option.of(new HoodieInstant(HoodieInstant.State.REQUESTED,
+        tableServiceType.getAction(), instantTime));
     try {
-      this.txnManager.beginTransaction(Option.of(new HoodieInstant(HoodieInstant.State.REQUESTED,
-          tableServiceType.getAction(), instantTime)), Option.empty());
+      this.txnManager.beginTransaction(inflightInstant, Option.empty());
       LOG.info("Scheduling table service " + tableServiceType);
       return scheduleTableServiceInternal(instantTime, extraMetadata, tableServiceType);
     } finally {
-      this.txnManager.endTransaction();
+      this.txnManager.endTransaction(inflightInstant);
     }
   }
 
