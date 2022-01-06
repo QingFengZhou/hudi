@@ -35,7 +35,7 @@ class TestCreateTable extends TestHoodieSqlBase {
   test("Test Create Managed Hoodie Table") {
     val tableName = generateTableName
     // Create a managed table
-    spark.sql(
+    val df = spark.sql(
       s"""
          | create table $tableName (
          |  id int,
@@ -48,6 +48,9 @@ class TestCreateTable extends TestHoodieSqlBase {
          |   preCombineField = 'ts'
          | )
        """.stripMargin)
+    val queryExecution = df.queryExecution
+    println( queryExecution.toString())
+
     val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
     assertResult(tableName)(table.identifier.table)
     assertResult("hudi")(table.provider.get)

@@ -46,7 +46,10 @@ class TestDeleteTable extends TestHoodieSqlBase {
         )
 
         // delete data from table
-        spark.sql(s"delete from $tableName where id = 1")
+        val delDf = spark.sql(s"delete from $tableName where id = 1")
+        val queryExecution = delDf.queryExecution
+        println( queryExecution.toString())
+
         checkAnswer(s"select count(1) from $tableName") (
           Seq(0)
         )

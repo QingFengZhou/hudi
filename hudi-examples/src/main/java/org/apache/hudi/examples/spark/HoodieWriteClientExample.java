@@ -61,6 +61,9 @@ import java.util.stream.Collectors;
  * <tablePath> and <tableName> describe root path of hudi and table name
  * for example, `HoodieWriteClientExample file:///tmp/hoodie/sample-table hoodie_rt`
  */
+
+//  file:///Users/zhouqingfeng/Desktop/mydirect/tmp/hudi/test/tesstss    tbtb1
+// set VM options `-Dspark.master=local[2]`;
 public class HoodieWriteClientExample {
 
   private static final Logger LOG = LogManager.getLogger(HoodieWriteClientExample.class);
@@ -110,39 +113,39 @@ public class HoodieWriteClientExample {
       client.insert(writeRecords, newCommitTime);
 
       // updates
-      newCommitTime = client.startCommit();
-      LOG.info("Starting commit " + newCommitTime);
-      List<HoodieRecord<HoodieAvroPayload>> toBeUpdated = dataGen.generateUpdates(newCommitTime, 2);
-      records.addAll(toBeUpdated);
-      recordsSoFar.addAll(toBeUpdated);
-      writeRecords = jsc.parallelize(records, 1);
-      client.upsert(writeRecords, newCommitTime);
+//      newCommitTime = client.startCommit();
+//      LOG.info("Starting commit " + newCommitTime);
+//      List<HoodieRecord<HoodieAvroPayload>> toBeUpdated = dataGen.generateUpdates(newCommitTime, 2);
+//      records.addAll(toBeUpdated);
+//      recordsSoFar.addAll(toBeUpdated);
+//      writeRecords = jsc.parallelize(records, 1);
+//      client.upsert(writeRecords, newCommitTime);
 
       // Delete
-      newCommitTime = client.startCommit();
-      LOG.info("Starting commit " + newCommitTime);
-      // just delete half of the records
-      int numToDelete = recordsSoFar.size() / 2;
-      List<HoodieKey> toBeDeleted = recordsSoFar.stream().map(HoodieRecord::getKey).limit(numToDelete).collect(Collectors.toList());
-      JavaRDD<HoodieKey> deleteRecords = jsc.parallelize(toBeDeleted, 1);
-      client.delete(deleteRecords, newCommitTime);
-
-      // Delete by partition
-      newCommitTime = client.startCommit();
-      client.startCommitWithTime(newCommitTime, HoodieTimeline.REPLACE_COMMIT_ACTION);
-      LOG.info("Starting commit " + newCommitTime);
-      // The partition where the data needs to be deleted
-      List<String> partitionList = toBeDeleted.stream().map(s -> s.getPartitionPath()).distinct().collect(Collectors.toList());
-      List<String> deleteList = recordsSoFar.stream().filter(f -> !partitionList.contains(f.getPartitionPath()))
-          .map(m -> m.getKey().getPartitionPath()).distinct().collect(Collectors.toList());
-      client.deletePartitions(deleteList, newCommitTime);
-
-      // compaction
-      if (HoodieTableType.valueOf(tableType) == HoodieTableType.MERGE_ON_READ) {
-        Option<String> instant = client.scheduleCompaction(Option.empty());
-        JavaRDD<WriteStatus> writeStatues = client.compact(instant.get());
-        client.commitCompaction(instant.get(), writeStatues, Option.empty());
-      }
+//      newCommitTime = client.startCommit();
+//      LOG.info("Starting commit " + newCommitTime);
+//      // just delete half of the records
+//      int numToDelete = recordsSoFar.size() / 2;
+//      List<HoodieKey> toBeDeleted = recordsSoFar.stream().map(HoodieRecord::getKey).limit(numToDelete).collect(Collectors.toList());
+//      JavaRDD<HoodieKey> deleteRecords = jsc.parallelize(toBeDeleted, 1);
+//      client.delete(deleteRecords, newCommitTime);
+//
+//      // Delete by partition
+//      newCommitTime = client.startCommit();
+//      client.startCommitWithTime(newCommitTime, HoodieTimeline.REPLACE_COMMIT_ACTION);
+//      LOG.info("Starting commit " + newCommitTime);
+//      // The partition where the data needs to be deleted
+//      List<String> partitionList = toBeDeleted.stream().map(s -> s.getPartitionPath()).distinct().collect(Collectors.toList());
+//      List<String> deleteList = recordsSoFar.stream().filter(f -> !partitionList.contains(f.getPartitionPath()))
+//          .map(m -> m.getKey().getPartitionPath()).distinct().collect(Collectors.toList());
+//      client.deletePartitions(deleteList, newCommitTime);
+//
+//      // compaction
+//      if (HoodieTableType.valueOf(tableType) == HoodieTableType.MERGE_ON_READ) {
+//        Option<String> instant = client.scheduleCompaction(Option.empty());
+//        JavaRDD<WriteStatus> writeStatues = client.compact(instant.get());
+//        client.commitCompaction(instant.get(), writeStatues, Option.empty());
+//      }
 
     }
   }

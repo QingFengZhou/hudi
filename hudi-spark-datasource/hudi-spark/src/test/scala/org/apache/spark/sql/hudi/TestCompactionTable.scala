@@ -51,6 +51,7 @@ class TestCompactionTable extends TestHoodieSqlBase {
       val timestamps = compactionRows.map(_.getString(0))
       assertResult(2)(timestamps.length)
 
+      println( "sssss" +  s"run compaction on $tableName at ${timestamps(1)}")
       spark.sql(s"run compaction on $tableName at ${timestamps(1)}")
       checkAnswer(s"select id, name, price, ts from $tableName order by id")(
         Seq(1, "a1", 11.0, 1000),

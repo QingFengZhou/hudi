@@ -165,6 +165,7 @@ public class HoodieJavaStreamingApp {
     int numInitialCommits = 0;
 
     // thread for spark strucutured streaming
+    ////struct streaming 实时写入hoodie 表
     try {
       Future<Void> streamFuture = executor.submit(() -> {
         LOG.info("===== Streaming Starting =====");
